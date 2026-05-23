@@ -1,6 +1,6 @@
 # autopsy — Complete Implementation Plan
 
-> *Your agent died. Here's why.*
+> _Your agent died. Here's why._
 
 > **Hand this document to your AI IDE as a single prompt.** It contains every file, interface, data structure, and feature needed to build autopsy end-to-end.
 
@@ -11,6 +11,7 @@
 **What we're building:** A pip-installable Python framework (`autopsy`) that wraps any async LLM agent with a single decorator, captures a full execution trace, streams it to a local web dashboard (auto-opened in browser), and runs a GMI Cloud–powered diagnostics agent that identifies root causes and suggests fixes in <2 seconds. The dashboard is deployable as a RocketRide agent for team sharing.
 
 **Stack:**
+
 - Python 3.11+, asyncio, FastAPI, WebSockets
 - React + Vite (dashboard frontend, bundled into the package)
 - GMI Cloud API (OpenAI-compatible, inference on H100)
@@ -18,6 +19,7 @@
 - RocketRide (one-click deploy of the dashboard agent)
 
 **Pip install and run:**
+
 ```bash
 pip install autopsy
 autopsy run agent.py        # starts server + opens browser
@@ -579,10 +581,10 @@ ReplayEngine — re-execute any agent from any node checkpoint.
 
 API:
     engine = ReplayEngine(bundle: TraceBundle)
-    
+
     # Re-run the full session with different config
     result = await engine.replay_full(model_override="llama-3-70b")
-    
+
     # Re-run from a specific node (everything before is frozen/mocked)
     result = await engine.replay_from_node(
         node_id="a3f2c1",
@@ -590,7 +592,7 @@ API:
         temperature_override=None,
         prompt_patch=None,       # optional: replace system prompt at this node
     )
-    
+
     # Compare two runs side-by-side
     comparison = await engine.compare(
         run_a_config={},
@@ -690,7 +692,7 @@ WEBSOCKET:
 
 STATIC FILES:
   Mount the built React app at / (catch-all, serve index.html for all non-/api routes)
-  
+
 STARTUP:
   - Load existing sessions index from ~/.autopsy/sessions/sessions_index.json
   - Broadcast sessions_list to any connected WS clients
@@ -740,13 +742,13 @@ class GMIAgent:
     async def diagnose(self, bundle: TraceBundle, target_node_id: str = None) -> DiagnosisResult:
         '''
         If target_node_id is None, auto-detect the first error node from bundle.
-        
+
         Build context:
           1. Summarize the full DAG as text: node names, types, sequence, latencies
           2. For the failed node: full prompt, response, error message, traceback
           3. For parent nodes of the failed node: their outputs (as the failed node's context)
           4. Token budget: stay under 8k tokens for the diagnosis prompt
-          
+
         Call GMI with the diagnosis system prompt (see prompts.py).
         Parse the structured JSON response.
         Return DiagnosisResult.
@@ -768,7 +770,7 @@ from autopsy.core.events import DiagnosisResult  # noqa: E402
 ```python
 """
 DIAGNOSIS_SYSTEM_PROMPT = '''
-You are an expert AI agent debugger. You receive a trace of a multi-agent LLM pipeline 
+You are an expert AI agent debugger. You receive a trace of a multi-agent LLM pipeline
 that has failed or performed poorly, and you diagnose the root cause.
 
 You MUST respond with a valid JSON object matching this exact schema:
@@ -830,7 +832,7 @@ class GeminiAgent:
         # Serializes full bundle as text (all events, all prompts/responses)
         # Calls Gemini 1.5 Pro with the full trace + DIAGNOSIS_SYSTEM_PROMPT
         # Parses JSON response into DiagnosisResult
-        
+
     async def summarize_long_trace(self, bundle: TraceBundle) -> str:
         # Returns a 500-word summary of the full trace for display in dashboard
         # Used when trace is too long to show in full in the side panel
@@ -877,7 +879,7 @@ autopsy diagnose <session_id_or_path> [--node NODE_ID]
 autopsy sessions
     1. List all saved sessions from ~/.autopsy/sessions/sessions_index.json
     2. Show: session_id, agent_name, date, status, token count, error count
-    
+
 autopsy clean [--older-than 7d]
     1. Delete old session files from ~/.autopsy/sessions/
 
@@ -913,7 +915,7 @@ class RocketRideDeployer:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.base_url = "https://api.rocketride.io/v1"   # confirm exact endpoint with RocketRide docs before v2 implementation
-    
+
     # v1 fallback (available now):
     async def export_sessions(self, sessions_dir: str, output_path: str) -> str:
         '''
@@ -921,7 +923,7 @@ class RocketRideDeployer:
         Teammate runs: autopsy open autopsy-export.json to view in local dashboard.
         Returns output_path.
         '''
-    
+
     async def deploy(self, name: str, sessions_dir: str) -> DeployResult:
         '''
         1. Package the FastAPI server + static dashboard + sessions into a deploy bundle
@@ -940,7 +942,7 @@ class DeployResult:
     agent_id: str
     status: str
     deploy_log: str
-    
+
 ROCKETRIDE_AGENT_CONFIG = {
     "name": "{name}",
     "runtime": "python3.11",
@@ -957,6 +959,7 @@ ROCKETRIDE_AGENT_CONFIG = {
 ## 14. React Dashboard — Full Component Spec
 
 ### `dashboard/src/App.tsx`
+
 ```
 Layout:
   ┌─────────────────────────────────────────────────────┐
@@ -982,12 +985,13 @@ State managed in Zustand store (useTraceStore):
 ```
 
 ### `dashboard/src/components/DAGGraph.tsx`
+
 ```
 Library: React Flow (reactflow package)
 
 NODE RENDERING:
   - Each node_id from node_index → one React Flow node
-  - Node color: 
+  - Node color:
       green (#0a6e55) if NodeEndEvent present and no NodeErrorEvent
       red (#c0392b) if NodeErrorEvent present
       amber (#9a6000) if running (NodeStartEvent seen, no end yet)
@@ -1005,7 +1009,7 @@ LIVE UPDATE:
   - On each WebSocket event, update node colors in real-time
   - Animate node appearance with fade-in
   - Auto-layout using dagre (top-to-bottom hierarchical layout)
-  
+
 INTERACTIONS:
   - Click node → set activeNodeId → shows NodeDetail
   - Right-click node → context menu: "Diagnose from here", "Replay from here", "Copy node ID"
@@ -1013,6 +1017,7 @@ INTERACTIONS:
 ```
 
 ### `dashboard/src/components/NodeDetail.tsx`
+
 ```
 Right panel showing full detail of selected node.
 
@@ -1022,19 +1027,19 @@ SECTIONS (tabs):
      - depth indicator (indented to show nesting)
      - duration_ms, tokens used (prompt + completion)
      - parent node name (clickable → selects parent)
-  
+
   2. Input / Output
      - input_data: syntax-highlighted JSON (use react-json-view)
      - output_data: syntax-highlighted JSON
      - If NodeErrorEvent: show error_type, error_message in red box, traceback in expandable code block
-  
+
   3. LLM Calls (if any LLMRequest/LLMResponseEvents for this node)
      - Model name + badge
      - Full messages array (each message as expandable chat bubble)
      - Tool calls list
      - Token counts: prompt / completion / total
      - Latency bar
-  
+
   4. Diagnostics (shown when DiagnosisResult is loaded for this node)
      - Root cause card (styled prominently)
      - Error category badge
@@ -1042,7 +1047,7 @@ SECTIONS (tabs):
      - Code snippet (syntax highlighted, copy button)
      - Confidence meter (0–100%)
      - Latency insight
-  
+
 ACTIONS (bottom of panel):
   [Diagnose this node]  → POST /diagnose, show loading spinner, populate tab 4
   [Replay from here]    → opens ReplayControls with this node pre-selected
@@ -1050,6 +1055,7 @@ ACTIONS (bottom of panel):
 ```
 
 ### `dashboard/src/components/DiagnosticsPanel.tsx`
+
 ```
 Shown as an overlay card when diagnosis is complete.
 
@@ -1081,6 +1087,7 @@ LAYOUT:
 ```
 
 ### `dashboard/src/components/ReplayControls.tsx`
+
 ```
 Bottom drawer that slides up when replay is triggered.
 
@@ -1103,6 +1110,7 @@ COMPARISON VIEW:
 ```
 
 ### `dashboard/src/components/LatencyChart.tsx`
+
 ```
 Bottom strip bar chart.
 
@@ -1119,6 +1127,7 @@ Shows a horizontal line at p50 latency for context.
 ```
 
 ### Empty and Error States (required for all components)
+
 ```
 TraceList — empty state:
   When sessions_index is empty: show a centered message:
@@ -1151,6 +1160,7 @@ General network errors:
 ```
 
 ### `dashboard/src/hooks/useTraceSocket.ts`
+
 ```typescript
 /*
 WebSocket hook that:
@@ -1228,13 +1238,13 @@ include = ["autopsy*"]
 
 ```bash
 # GMI Cloud — get at gmi.ai/console
-GMI_API_KEY=your_gmi_api_key_here
+GMI_API_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6Ijg2MTJmYTJhLTliMmUtNDA3YS04ZDk2LTBmMDRiMjRjMTcyMSIsInNjb3BlIjoiaWVfbW9kZWwiLCJjbGllbnRJZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMCJ9.IHqMwbfEJEj8CgGXQaqN9u2xeQGFBcaKo1VCcbDoCdY
 GMI_BASE_URL=https://api.gmi-serving.com/v1
 GMI_DEFAULT_MODEL=meta-llama/Llama-4-Maverick-17B-128E-Instruct
 GMI_FALLBACK_MODEL=deepseek-ai/DeepSeek-R1-0528
 
 # Google AI Studio — get at aistudio.google.com
-GOOGLE_AI_API_KEY=your_google_ai_key_here
+GOOGLE_AI_API_KEY=AIzaSyDv9Yd-ZbxB45OtxsTvWGOb1PFc9d0d0cI
 GEMINI_MODEL=gemini-2.5-pro
 
 # RocketRide — get at rocketride.io
@@ -1265,14 +1275,14 @@ Run with: autopsy run examples/broken_agent.py
 What it does:
 1. Takes a hardcoded query: "Summarize the latest news about AI safety"
 2. Planner agent (GMI LLaMA) decides to search + summarize
-3. Search tool: returns a large fake news article (~4000 tokens)  
+3. Search tool: returns a large fake news article (~4000 tokens)
 4. Summarizer agent (same GMI model): receives TOO MUCH context
    — the Search output + original messages exceeds the model's practical limit
    — model returns malformed JSON (simulating a real failure mode)
 5. Response assembler: fails to parse the malformed JSON → raises ValueError
 
 This triggers:
-- NodeErrorEvent on the Summarizer node  
+- NodeErrorEvent on the Summarizer node
 - NodeErrorEvent on the Response Assembler node
 - Session ends with status="error"
 - Dashboard shows two red nodes
@@ -1331,13 +1341,13 @@ async def research_agent(query: str):
         messages=[{"role": "user", "content": f"Plan how to research: {query}"}],
         max_tokens=200
     )
-    
+
     # Step 2: search (returns too much data)
     search_results = await search_tool(query)
-    
+
     # Step 3: summarize (will fail)
     summary = await summarizer_agent(search_results)
-    
+
     # Step 4: assemble (blocked by step 3 failure)
     return await response_assembler(summary)
 
@@ -1444,15 +1454,17 @@ __all__ = ["lens", "LensConfig", "TraceBundle"]
 ````markdown
 # autopsy
 
-> *Your agent died. Here's why.*
+> _Your agent died. Here's why._
 > One decorator. Full agent visibility. AI that diagnoses your AI.
 
 ## Install
+
 ```bash
 pip install autopsy
 ```
 
 ## Quickstart
+
 ```python
 from autopsy import lens
 
@@ -1461,12 +1473,14 @@ async def my_agent(query: str):
     # your existing agent code — zero changes
     ...
 ```
+
 ```bash
 autopsy run agent.py
 # Browser opens at http://localhost:7823
 ```
 
 ## What you get
+
 - **Live DAG** of every agent hop, tool call, and LLM completion
 - **Root cause diagnosis** via GMI Cloud H100 inference in <2s
 - **Time-travel replay** — re-run from any node with any model
@@ -1474,12 +1488,14 @@ autopsy run agent.py
 - **Works with everything** — OpenAI, LangChain, AutoGen, raw httpx
 
 ## Deploy for your team
+
 ```bash
 autopsy deploy --name "my-project-traces"
 # Returns: https://your-agent.rocketride.io
 ```
 
 ## Environment variables
+
 Copy `.env.example` to `.env` and fill in your keys.
 ````
 
@@ -1511,30 +1527,35 @@ Copy `.env.example` to `.env` and fill in your keys.
 
 12. **Test coverage requirements.** Each test file must include at minimum:
 
-   `tests/unit/test_events.py`:
-   - All event dataclasses serialize/deserialize to JSON without loss
-   - TraceBundle round-trips through `asdict()` + `json.dumps()` + `json.loads()`
+`tests/unit/test_events.py`:
 
-   `tests/unit/test_decorator.py`:
-   - `@lens.trace` on an async function emits NodeStartEvent + NodeEndEvent
-   - Nested `@lens.trace` calls produce correct parent_node_id linkage
-   - Exception in traced function emits NodeErrorEvent and re-raises
-   - `get_current_session()` returns None after session finalize
-   - Use `respx` to mock httpx and avoid real API calls
+- All event dataclasses serialize/deserialize to JSON without loss
+- TraceBundle round-trips through `asdict()` + `json.dumps()` + `json.loads()`
 
-   `tests/unit/test_replay.py`:
-   - `replay_from_node()` returns frozen output for pre-checkpoint nodes
-   - `replay_from_node()` calls real function for the target node
-   - `compare()` produces correct latency_delta and token_delta
-   - Side effect warning is printed to stdout before replay
+`tests/unit/test_decorator.py`:
 
-   `tests/integration/test_server.py`:
-   - `GET /api/sessions` returns empty list when no sessions
-   - `POST /api/sessions/{id}/diagnose` returns 404 for unknown session
-   - WebSocket `/ws/live` receives session_complete with summary (not full bundle)
-   - Use `httpx.AsyncClient(app=app, base_url="http://test")` for in-process testing
+- `@lens.trace` on an async function emits NodeStartEvent + NodeEndEvent
+- Nested `@lens.trace` calls produce correct parent_node_id linkage
+- Exception in traced function emits NodeErrorEvent and re-raises
+- `get_current_session()` returns None after session finalize
+- Use `respx` to mock httpx and avoid real API calls
 
-   `tests/integration/test_diagnostics.py`:
-   - `GMIAgent.diagnose()` returns a valid DiagnosisResult when given a bundle with errors
-   - Falls back to GeminiAgent when bundle token estimate > 32k
-   - Mock both GMI and Gemini API responses with `respx`
+`tests/unit/test_replay.py`:
+
+- `replay_from_node()` returns frozen output for pre-checkpoint nodes
+- `replay_from_node()` calls real function for the target node
+- `compare()` produces correct latency_delta and token_delta
+- Side effect warning is printed to stdout before replay
+
+`tests/integration/test_server.py`:
+
+- `GET /api/sessions` returns empty list when no sessions
+- `POST /api/sessions/{id}/diagnose` returns 404 for unknown session
+- WebSocket `/ws/live` receives session_complete with summary (not full bundle)
+- Use `httpx.AsyncClient(app=app, base_url="http://test")` for in-process testing
+
+`tests/integration/test_diagnostics.py`:
+
+- `GMIAgent.diagnose()` returns a valid DiagnosisResult when given a bundle with errors
+- Falls back to GeminiAgent when bundle token estimate > 32k
+- Mock both GMI and Gemini API responses with `respx`
