@@ -8,10 +8,12 @@ function renderDetail() {
   const nid = state.activeNodeId;
   const ni = bundle.node_index[nid] || {};
   const start = ni.start_event || {};
-  const end = ni.end_event || {};
-  const err = ni.error_event || {};
+  const endEv = ni.end_event || null;
+  const errEv = ni.error_event || null;
+  const end = endEv || {};
+  const err = errEv || {};
   const llmEvs = ni.llm_events || [];
-  const status = err ? "error" : (end ? "ok" : "running");
+  const status = errEv ? "error" : (endEv ? "ok" : "running");
   const dur = end.duration_ms || err.duration_ms || 0;
 
   const tabs = [
@@ -36,7 +38,7 @@ function renderDetail() {
       <div class="k">Parent</div><div>${escapeHtml(start.parent_node_id || "(root)")}</div>
       <div class="k">Status</div><div>${status}</div>
     </div>`;
-    if (err) {
+    if (errEv) {
       html += `<h3 style="color:var(--err);">Error</h3>
         <div class="kv">
           <div class="k">Type</div><div>${escapeHtml(err.error_type || "")}</div>
@@ -52,7 +54,7 @@ function renderDetail() {
   } else if (state.activeTab === "io") {
     html += `<h3>Input</h3>
       <pre class="code">${escapeHtml(safeJSON(start.input_data))}</pre>`;
-    if (end) {
+    if (endEv) {
       html += `<h3 style="margin-top:14px;">Output</h3>
         <pre class="code">${escapeHtml(safeJSON(end.output_data))}</pre>`;
     }
@@ -110,7 +112,19 @@ function safeJSON(v) {
 
 function renderDiagnosis(d) {
   const confPct = Math.round((d.confidence || 0) * 100);
+  const rr = d.rocketride || null;
+  const rrBanner = (rr && rr.used) ? `
+    <div class="rr-banner">
+      <span class="dot-rr" style="display:inline-block;width:6px;height:6px;
+        border-radius:50%;background:var(--ok);margin-right:6px;"></span>
+      Trace pre-processed by RocketRide pipeline
+      <code>${escapeHtml(rr.pipeline || "autopsy_diagnose.pipe")}</code>
+      ${rr.similar_cases > 0
+        ? ` — found <strong>${rr.similar_cases}</strong> similar past failure(s)`
+        : ""}
+    </div>` : "";
   return `<div class="diag-card">
+    ${rrBanner}
     <h4>🔍 Root cause</h4>
     <div style="margin-bottom:10px;">${escapeHtml(d.root_cause || "")}</div>
     <div class="kv">
@@ -203,10 +217,80 @@ async function runReplay(nodeId) {
       });
     if (!r.ok) throw new Error(`status ${r.status}`);
     state.replayResult = await r.json();
-    toast("Replay complete - errors fixed!");
+    // Also signal the live demo pipeline so the next loop iteration succeeds.
+    try {
+      const r2 = await fetch("/api/demo/fix", { method: "POST" });
+      if (r2.ok) {
+        state.demoFixed = true;
+        toast("✅ Fix applied — next iteration of the live pipeline will go green");
+      } else {
+        toast("Replay complete - errors fixed!");
+      }
+    } catch (_) {
+      toast("Replay complete - errors fixed!");
+    }
     renderCenter();
+    renderHeaderStatus();
   } catch (e) {
     toast(`Replay failed: ${e.message}`, "err");
+  }
+}
+
+async function demoReset() {
+  try {
+    const r = await fetch("/api/demo/reset", { method: "POST" });
+    if (r.ok) {
+      state.demoFixed = false;
+      toast("Demo reset — pipeline will start failing again");
+      renderHeaderStatus();
+    }
+  } catch (e) {
+    toast(`Reset failed: ${e.message}`, "err");
+  }
+}
+
+async function fetchDemoStatus() {
+  try {
+    const r = await fetch("/api/demo/status");
+    if (r.ok) {
+      const d = await r.json();
+      state.demoFixed = !!d.fix_applied;
+      renderHeaderStatus();
+    }
+  } catch (_) { /* ignore */ }
+}
+
+async function fetchRocketRideStatus() {
+  const el = document.getElementById("rr-status");
+  if (!el) return;
+  try {
+    const r = await fetch("/api/rocketride/status");
+    if (!r.ok) throw new Error("status " + r.status);
+    const d = await r.json();
+    const cls = d.ok ? "ok" : "off";
+    const label = d.ok ? "RocketRide: connected"
+      : (d.engine_reachable ? "RocketRide: ready"
+         : (d.sdk_installed ? "RocketRide: engine offline"
+            : "RocketRide: not installed"));
+    el.className = "rr-status " + cls;
+    el.innerHTML = '<span class="dot-rr"></span>' + label;
+    el.title = (d.detail || "") + "\npipe: " + (d.pipe_path || "?") +
+               "\nuri: " + (d.uri || "?");
+  } catch (e) {
+    el.className = "rr-status off";
+    el.innerHTML = '<span class="dot-rr"></span>RocketRide: offline';
+    el.title = String(e);
+  }
+}
+
+function renderHeaderStatus() {
+  const el = document.getElementById("demo-status");
+  if (!el) return;
+  if (state.demoFixed) {
+    el.innerHTML = `<span class="pill ok-pill">demo: fixed</span>
+      <button class="btn ghost btn-sm" id="btn-demo-reset">↺ reset</button>`;
+  } else {
+    el.innerHTML = `<span class="pill err-pill">demo: failing</span>`;
   }
 }
 
@@ -214,7 +298,13 @@ document.addEventListener("click", (e) => {
   if (e.target.id === "btn-apply-replay" && state.activeNodeId) {
     runReplay(state.activeNodeId);
   }
+  if (e.target.id === "btn-demo-reset") {
+    demoReset();
+  }
 });
 
 fetchSessions();
+fetchDemoStatus();
+fetchRocketRideStatus();
+setInterval(fetchRocketRideStatus, 30000);
 connectWS();

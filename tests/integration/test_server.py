@@ -1,5 +1,4 @@
 """Integration tests for FastAPI server using httpx in-process."""
-import json
 
 import httpx
 import pytest

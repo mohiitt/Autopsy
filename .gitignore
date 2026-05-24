@@ -13,3 +13,4 @@ dashboard/dist/
 .env
 *.log
 .DS_Store
+.rocketride/

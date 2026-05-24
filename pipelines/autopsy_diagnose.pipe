@@ -1,0 +1,83 @@
+{
+	"components": [
+		{
+			"id": "chat_1",
+			"provider": "chat",
+			"config": { "hideForm": true, "mode": "Source", "parameters": {}, "type": "chat" },
+			"ui": { "position": { "x": 20, "y": 200 }, "measured": { "width": 150, "height": 66 }, "data": { "class": "source", "type": "default" } }
+		},
+		{
+			"id": "prompt_1",
+			"provider": "prompt",
+			"config": {
+				"instructions": [
+					"You are autopsy, an AI debugger for agentic LLM applications.",
+					"Given a failing trace (errors, timings, prompts, tool calls), identify the single root cause node.",
+					"Return STRICT JSON with: root_cause, affected_node_name, error_category, confidence (0..1), fix_suggestion, fix_code_snippet, latency_insight.",
+					"Categories: context_overflow | bad_json | tool_error | timeout | rate_limit | hallucination | other.",
+					"Be concrete: cite the exact node name, exact error message, and propose runnable code."
+				],
+				"parameters": {}
+			},
+			"ui": { "position": { "x": 240, "y": 200 }, "measured": { "width": 150, "height": 66 }, "data": { "class": "prompt", "type": "default" } },
+			"input": [
+				{ "lane": "questions", "from": "chat_1" }
+			]
+		},
+		{
+			"id": "agent_rocketride_1",
+			"provider": "agent_rocketride",
+			"config": {
+				"instructions": [
+					"Use the memory tool to recall similar past failures before answering.",
+					"Always return the answer as a single JSON object."
+				],
+				"max_waves": 6,
+				"parameters": {}
+			},
+			"ui": { "position": { "x": 460, "y": 200 }, "measured": { "width": 150, "height": 86 }, "data": { "class": "agent", "type": "default" } },
+			"input": [
+				{ "lane": "questions", "from": "prompt_1" }
+			]
+		},
+		{
+			"id": "response_answers_1",
+			"provider": "response_answers",
+			"config": { "laneName": "answers" },
+			"ui": { "position": { "x": 680, "y": 200 }, "measured": { "width": 150, "height": 66 }, "data": { "class": "response", "type": "default" } },
+			"input": [
+				{ "lane": "answers", "from": "agent_rocketride_1" }
+			]
+		},
+		{
+			"id": "llm_openai_1",
+			"provider": "llm_ollama",
+			"config": {
+				"profile": "custom",
+				"custom": {
+					"model": "${ROCKETRIDE_OPENAI_MODEL}",
+					"serverbase": "${ROCKETRIDE_OPENAI_BASE_URL}",
+					"apikey": "${ROCKETRIDE_OPENAI_KEY}",
+					"modelTotalTokens": 16384
+				},
+				"parameters": {}
+			},
+			"ui": { "position": { "x": 390, "y": 360 }, "measured": { "width": 150, "height": 66 }, "data": { "class": "llm", "type": "default" } },
+			"control": [
+				{ "classType": "llm", "from": "agent_rocketride_1" }
+			]
+		},
+		{
+			"id": "memory_internal_1",
+			"provider": "memory_internal",
+			"config": { "type": "memory_internal", "parameters": {} },
+			"ui": { "position": { "x": 560, "y": 360 }, "measured": { "width": 150, "height": 66 }, "data": { "class": "memory", "type": "default" } },
+			"control": [
+				{ "classType": "memory", "from": "agent_rocketride_1" }
+			]
+		}
+	],
+	"project_id": "b91deb36-4110-47eb-bd85-78efa3bdb45e",
+	"viewport": { "x": 0, "y": 0, "zoom": 1 },
+	"version": 1
+}

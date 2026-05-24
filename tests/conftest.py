@@ -1,5 +1,4 @@
 """Pytest config: each test uses a fresh temp session dir."""
-import os
 import tempfile
 
 import pytest

@@ -57,6 +57,17 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    # Clear any stale fix marker from a previous run so each session starts
+    # in the unfixed (broken) state. The user must explicitly click
+    # "Apply fix & replay" on the dashboard to set the marker.
+    for _marker in (Path.home() / ".autopsy" / "fix_applied",
+                    Path.cwd() / ".autopsy" / "fix_applied"):
+        try:
+            if _marker.exists():
+                _marker.unlink()
+        except Exception:
+            pass
+
     # --- REST endpoints --------------------------------------------------------
 
     @app.get("/health")
@@ -134,6 +145,33 @@ def create_app() -> FastAPI:
                 estimate_bundle_tokens,
             )
             from autopsy.diagnostics.gmi_agent import GMIAgent
+            from autopsy.diagnostics.rocketride_agent import RocketRideAgent
+
+            # OPTIONAL pre-processing via RocketRide pipeline. When the engine
+            # is reachable, this scrubs PII, summarizes the trace, and pulls
+            # similar past failures from vector memory. The result is attached
+            # to the bundle so the GMI/Gemini prompt has richer context.
+            # When the engine isn't running we skip silently and behave
+            # exactly as before -> no breakage.
+            rr_meta: dict = {"used": False}
+            try:
+                rr = RocketRideAgent()
+                if rr.available():
+                    rr_ctx = await rr.preprocess(bundle)
+                    if rr_ctx:
+                        bundle.rocketride_context = rr_ctx  # type: ignore
+                        rr_meta = {
+                            "used": True,
+                            "pipeline": rr_ctx.get("_rocketride", {}).get(
+                                "pipeline", "autopsy_diagnose.pipe"),
+                            "similar_cases": len(
+                                rr_ctx.get("similar_cases", []) or []),
+                        }
+            except Exception:
+                logger.exception(
+                    "RocketRide pre-processing failed; "
+                    "falling back to direct LLM diagnosis")
+
             force = (req.force_model or "").lower()
             if force == "gemini":
                 agent = GeminiAgent()
@@ -143,10 +181,38 @@ def create_app() -> FastAPI:
                 est = estimate_bundle_tokens(bundle)
                 agent = GeminiAgent() if est > 32_000 else GMIAgent()
             result = await agent.diagnose(bundle, req.node_id)
-            return JSONResponse(asdict(result))
+            # Attach RocketRide metadata so the dashboard can show it.
+            payload = asdict(result)
+            payload["rocketride"] = rr_meta
+            return JSONResponse(payload)
         except Exception:
             logger.exception("diagnose route failed")
             raise HTTPException(status_code=500, detail="diagnose failed")
+
+    @app.get("/api/rocketride/status")
+    async def rocketride_status() -> JSONResponse:
+        """Health-check the RocketRide integration for the dashboard pill."""
+        try:
+            from autopsy.diagnostics.rocketride_agent import RocketRideAgent
+            agent = RocketRideAgent()
+            pre = await agent.preflight()
+            return JSONResponse({
+                "sdk_installed": pre.sdk_installed,
+                "engine_reachable": pre.engine_reachable,
+                "pipe_file_present": pre.pipe_file_present,
+                "ok": pre.ok,
+                "detail": pre.detail,
+                "uri": agent.uri,
+                "pipe_path": str(agent.pipe_path),
+            })
+        except Exception as e:
+            return JSONResponse({
+                "sdk_installed": False,
+                "engine_reachable": False,
+                "pipe_file_present": False,
+                "ok": False,
+                "detail": str(e),
+            })
 
     @app.post("/api/sessions/{session_id}/replay")
     async def replay(session_id: str, req: ReplayRequest) -> JSONResponse:
@@ -169,6 +235,55 @@ def create_app() -> FastAPI:
             req.node_id, req.fix_description or "Fix applied")
         return JSONResponse(sim)
 
+    @app.delete("/api/sessions")
+    async def delete_all_sessions(keep_live: int = 0) -> JSONResponse:
+        """Bulk-delete sessions to clean up noisy sidebars in demos.
+
+        Query params:
+          keep_live=1 -> preserve sessions whose status is "running"
+        """
+        sd = _session_dir()
+        deleted = 0
+        for p in sd.glob("*.json"):
+            if p.name == "sessions_index.json":
+                continue
+            try:
+                if keep_live:
+                    try:
+                        bundle = json.loads(p.read_text())
+                        if (bundle.get("summary") or {}).get("status") == "running":
+                            continue
+                    except Exception:
+                        pass
+                p.unlink()
+                deleted += 1
+            except Exception:
+                logger.exception("delete failed for %s", p)
+        # Rebuild index from remaining files (simpler than surgical updates).
+        index_path = sd / "sessions_index.json"
+        try:
+            remaining = []
+            for p in sd.glob("*.json"):
+                if p.name == "sessions_index.json":
+                    continue
+                try:
+                    b = json.loads(p.read_text())
+                    remaining.append({
+                        "session_id": b.get("session_id"),
+                        "agent_name": b.get("agent_name"),
+                        "created_at": (b.get("events") or [{}])[0].get("timestamp", 0),
+                        "status": (b.get("summary") or {}).get("status", "unknown"),
+                        "error_count": (b.get("summary") or {}).get("error_count", 0),
+                        "node_count": (b.get("summary") or {}).get("node_count", 0),
+                        "input_query": b.get("input_query", ""),
+                    })
+                except Exception:
+                    pass
+            index_path.write_text(json.dumps(remaining))
+        except Exception:
+            logger.exception("rebuilding session index failed")
+        return JSONResponse({"deleted": deleted})
+
     @app.delete("/api/sessions/{session_id}")
     async def delete_session(session_id: str) -> JSONResponse:
         sd = _session_dir()
@@ -190,6 +305,68 @@ def create_app() -> FastAPI:
         except Exception:
             logger.exception("delete_session failed")
         return JSONResponse({"deleted": existed})
+
+    # --- Demo control endpoints (used by the live-loop demo) -----------------
+
+    def _fix_markers() -> list[Path]:
+        """Locations the demo pipeline watches for the fix-applied signal."""
+        home = Path.home() / ".autopsy" / "fix_applied"
+        cwd = Path.cwd() / ".autopsy" / "fix_applied"
+        return [home, cwd]
+
+    def _write_fix_markers() -> list[str]:
+        """Write the fix marker to every watched location.
+
+        Returns the list of paths that were written successfully. Failures are
+        swallowed (e.g. sandboxed home dir).
+        """
+        written: list[str] = []
+        for p in _fix_markers():
+            try:
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text("fix applied by dashboard")
+                written.append(str(p))
+            except (PermissionError, OSError):
+                logger.debug("could not write fix marker %s", p)
+            except Exception:
+                logger.exception("unexpected error writing fix marker %s", p)
+        return written
+
+    @app.post("/api/demo/fix")
+    async def demo_apply_fix() -> JSONResponse:
+        """Marks the live demo pipeline as 'fixed'.
+
+        After this call, the next iteration of the broken pipeline will run
+        in success mode (truncates oversized briefs before the synthesizer).
+        """
+        markers_written = _write_fix_markers()
+        await ws_manager.broadcast({
+            "type": "demo_status",
+            "data": {"fix_applied": True, "markers": markers_written},
+        })
+        return JSONResponse({"fix_applied": True, "markers": markers_written})
+
+    @app.post("/api/demo/reset")
+    async def demo_reset() -> JSONResponse:
+        """Removes the fix marker so the demo loop goes back to failing."""
+        removed = []
+        for p in _fix_markers():
+            try:
+                if p.exists():
+                    p.unlink()
+                    removed.append(str(p))
+            except Exception:
+                logger.exception("could not remove fix marker %s", p)
+        await ws_manager.broadcast({
+            "type": "demo_status",
+            "data": {"fix_applied": False, "removed": removed},
+        })
+        return JSONResponse({"fix_applied": False, "removed": removed})
+
+    @app.get("/api/demo/status")
+    async def demo_status() -> JSONResponse:
+        applied = any(p.exists() for p in _fix_markers())
+        return JSONResponse({"fix_applied": applied})
 
     # --- WebSocket -------------------------------------------------------------
 

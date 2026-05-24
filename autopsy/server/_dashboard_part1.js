@@ -96,6 +96,13 @@ function handleWsMessage(msg) {
     }
     if (ev.session_id === state.liveSessionId) {
       state.liveEvents.push(ev);
+      // Update sidebar counts for the live session.
+      const live = state.sessions.find(s => s.session_id === state.liveSessionId);
+      if (live) {
+        if (ev.event_type === "node_start") live.node_count = (live.node_count || 0) + 1;
+        if (ev.event_type === "node_error") live.error_count = (live.error_count || 0) + 1;
+        renderSessions();
+      }
       if (state.activeSessionId === state.liveSessionId) {
         renderCenter();
       }
@@ -111,6 +118,11 @@ function handleWsMessage(msg) {
     if (state.activeSessionId === summary.session_id) {
       fetchBundle(summary.session_id).then(() => renderCenter());
     }
+    return;
+  }
+  if (msg.type === "demo_status") {
+    state.demoFixed = !!(msg.data && msg.data.fix_applied);
+    if (typeof renderHeaderStatus === "function") renderHeaderStatus();
     return;
   }
 }
@@ -148,24 +160,60 @@ async function fetchBundle(sessionId) {
 
 function renderSessions() {
   const root = $("#session-list");
+  // Always show the header with the "clear" button so users can purge noise.
+  let header = `<div class="trace-header">
+    <span>TRACES (${state.sessions.length})</span>
+    <button class="btn ghost btn-xs" id="btn-clear-traces" title="Delete all finished traces">clear</button>
+  </div>`;
   if (!state.sessions.length) {
-    root.innerHTML = `<div class="empty">no traces yet.<br/><br/>
+    root.innerHTML = header + `<div class="empty">no traces yet.<br/><br/>
       run <code>autopsy run agent.py</code></div>`;
+    bindClearTraces();
     return;
   }
-  root.innerHTML = state.sessions.map(s => {
+  root.innerHTML = header + state.sessions.map(s => {
     const dt = new Date((s.created_at || 0) * 1000);
     const time = isNaN(dt) ? "" : dt.toLocaleTimeString();
     const active = s.session_id === state.activeSessionId ? " active" : "";
-    const status = s.status || "unknown";
-    return `<div class="session${active}" data-id="${s.session_id}">
-      <div class="name"><span class="status ${status}"></span>${escapeHtml(s.agent_name || "agent")}</div>
+    const isLive = s.session_id === state.liveSessionId;
+    const status = isLive ? "running" : (s.status || "unknown");
+    const liveBadge = isLive ? ' <span class="live-badge">LIVE</span>' : '';
+    return `<div class="session${active}${isLive ? ' live' : ''}" data-id="${s.session_id}">
+      <div class="name"><span class="status ${status}"></span>${escapeHtml(s.agent_name || "agent")}${liveBadge}</div>
       <div class="meta">${time} · ${s.node_count || 0} nodes · ${s.error_count || 0} errors</div>
     </div>`;
   }).join("");
   $$(".session", root).forEach(el => {
     el.addEventListener("click",
       () => selectSession(el.dataset.id));
+  });
+  bindClearTraces();
+}
+
+function bindClearTraces() {
+  const btn = document.getElementById("btn-clear-traces");
+  if (!btn) return;
+  btn.addEventListener("click", async () => {
+    if (!confirm("Delete all finished traces? (the live run is kept)")) return;
+    try {
+      const r = await fetch("/api/sessions?keep_live=1", { method: "DELETE" });
+      if (r.ok) {
+        const data = await r.json();
+        state.sessions = state.sessions.filter(
+          s => s.session_id === state.liveSessionId);
+        // Clear cached bundles and active selection if it was deleted.
+        if (state.activeSessionId !== state.liveSessionId) {
+          state.activeSessionId = state.liveSessionId;
+        }
+        renderSessions();
+        renderCenter();
+        toast(`Cleared ${data.deleted} trace(s)`);
+      } else {
+        toast("Clear failed", "err");
+      }
+    } catch (e) {
+      toast(`Clear failed: ${e.message}`, "err");
+    }
   });
 }
 
