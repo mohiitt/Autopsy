@@ -1,25 +1,27 @@
-# autopsy
+# Autopsy
 
 > _Your agent died. Here's why._
 > One decorator. Full agent visibility. AI that diagnoses your AI.
 
-`autopsy` wraps any async LLM agent with a single decorator, captures a full execution trace, streams it live to a local web dashboard, and runs an AI-powered diagnostic chain that identifies the root cause, suggests a code fix, and lets you replay the failing slice with the fix applied — all without leaving the dashboard.
+`autopsy` wraps any async LLM agent with a single decorator, captures a full execution trace, streams it live to a local web dashboard, and runs an AI-powered diagnostic chain. It identifies the root cause, suggests a code fix, and lets you replay the failing slice with the fix applied—all from the dashboard.
 
 Three AI products work together on every diagnosis:
 
-- **RocketRide pipeline** grounds the trace (PII scrub → trace summarize → similar-case retrieval). The pipeline is a real `.pipe` file you can open and edit in the RocketRide Studio (Cursor/VS Code extension).
-- **GMI Cloud** (DeepSeek-V3.2 / Qwen3-Next-80B) runs the actual root-cause reasoning.
-- **Google Gemini 2.5 Pro** is the long-context fallback if GMI rate-limits.
+- **RocketRide pipeline**: Grounds the trace (PII scrub → trace summarize → similar-case retrieval).
+- **GMI Cloud** (DeepSeek-V3.2 / Qwen3-Next-80B): Runs root-cause reasoning.
+- **Google Gemini 2.5 Pro**: Serves as the long-context fallback if GMI is rate-limited.
 
 ## Install
 
 ```bash
 pip install -e .
-# optional: enable the live RocketRide integration
+# Optional: enable the live RocketRide integration
 pip install -e '.[rocketride]'
 ```
 
 ## Quickstart
+
+1. Instrument your agent:
 
 ```python
 from autopsy import lens
@@ -30,6 +32,8 @@ async def my_agent(query: str):
     ...
 ```
 
+2. Run the agent and launch the dashboard:
+
 ```bash
 autopsy run agent.py
 # Dashboard opens at http://localhost:7823
@@ -38,39 +42,38 @@ autopsy run agent.py
 ## CLI
 
 ```bash
-autopsy run examples/financial_research_pipeline.py   # run an agent + dashboard
-autopsy serve                                          # start dashboard only
-autopsy sessions                                       # list saved traces
-autopsy diagnose <session_id>                          # AI root-cause analysis
-autopsy replay <session_id>                            # simulated replay with fix
-autopsy clean --all                                    # wipe local sessions
+autopsy run examples/financial_research_pipeline.py   # Run an agent + dashboard
+autopsy serve                                          # Start dashboard only
+autopsy sessions                                       # List saved traces
+autopsy diagnose <session_id>                          # Run AI root-cause analysis
+autopsy replay <session_id>                            # Simulated replay with fix
+autopsy clean --all                                    # Wipe local sessions
 ```
 
-## What you get
+## Key Features
 
-- **Live DAG** of every agent hop, tool call, and LLM completion — pan, zoom, and live "LIVE" badge on the active run
-- **Multi-AI diagnostics** — RocketRide pre-processor + GMI Cloud reasoning + Gemini fallback, with a green banner showing which pipeline ran
-- **Time-travel replay** — click any node and re-execute the failing slice with the fix; the live loop picks up the patched code on the next iteration
-- **Latency breakdown** — see exactly where your agent is slow
-- **OpenAI SDK auto-instrumented** — anything that uses OpenAI-compatible APIs (GMI, Together, Groq, ollama) is intercepted transparently
-- **Zero-config dashboard** — polished vanilla-JS dashboard ships with the package; no Node.js required
-- **Heuristic fallback** that still produces a useful diagnosis if every cloud LLM is unreachable
+- **Live DAG Trace**: Visual flow of agent hops, tool calls, and LLM completions with real-time streaming.
+- **Multi-AI Diagnostics**: Automated root-cause reasoning with GMI Cloud, Google Gemini, and RocketRide pre-processing.
+- **Time-Travel Replay**: Test code changes on the failing slice instantly, then hot-patch the running loop.
+- **Latency Insights**: View exact execution times for each agent step.
+- **OpenAI SDK Auto-Instrumentation**: Transparently intercept OpenAI-compatible API calls.
+- **Zero-Config UI**: Single-page dashboard running locally with no Node.js required.
 
-## Environment
+## Environment Setup
 
 Copy `.env.example` to `.env` and fill in your keys:
 
 ```bash
-# Required for the AI-powered diagnostic (free tier works)
-GMI_API_KEY=...                              # https://gmi.ai/console
+# Required for AI-powered diagnostics
+GMI_API_KEY=...
 GMI_DEFAULT_MODEL=deepseek-ai/DeepSeek-V3.2
 GMI_FALLBACK_MODEL=Qwen/Qwen3-Next-80B-A3B-Instruct
 
-# Optional: long-context fallback diagnoser
-GOOGLE_AI_API_KEY=...                        # https://aistudio.google.com
+# Optional: long-context fallback
+GOOGLE_AI_API_KEY=...
 GEMINI_MODEL=gemini-2.5-pro
 
-# Optional: RocketRide live engine (the .pipe file is loaded regardless)
+# Optional: RocketRide live engine (WS URL and key)
 ROCKETRIDE_URI=ws://localhost:5565
 ROCKETRIDE_APIKEY=
 ROCKETRIDE_OPENAI_KEY=${GMI_API_KEY}
@@ -81,162 +84,74 @@ AUTOPSY_ROCKETRIDE_SAFE_MODE=1               # 1 = simulated (default); 0 = live
 AUTOPSY_PORT=7823
 ```
 
-If everything is missing, autopsy falls back to a built-in heuristic diagnoser that still produces a sensible root-cause analysis — so the demo always works.
+_Note: If no API keys are provided, autopsy falls back to a built-in heuristic diagnoser._
 
-## Demo: continuous live loop (the main demo)
+## Demos
+
+### 1. Continuous Live Loop (Financial Research)
 
 ```bash
 autopsy run examples/financial_research_pipeline.py
 ```
 
-A continuously-running multi-agent pipeline:
+This runs a multi-agent loop with a deliberately broken synthesizer that overflows context.
 
-> orchestrator → ticker-planner → 3 parallel researchers (each with 3 tools) → synthesizer → risk-checker → report-writer → publisher
+1. **Watch**: The graph runs live. The synthesizer node will fail (turn red).
+2. **Diagnose**: Click the red node -> **🔍 Diagnose this node** to run the diagnosis.
+3. **Replay & Fix**: Click **"Apply fix & replay"**. The trace goes green, and the live pipeline hot-patches itself.
 
-Every ~8 seconds the pipeline runs another full iteration. The synthesizer is deliberately broken — it concatenates three 5KB researcher briefs into a single 15.6KB context and hits a 12KB limit. Real bug, real pattern.
+Configure loop knobs using environment variables:
 
-The full live demo loop:
+- `AUTOPSY_LOOP_DELAY_S` (default: 8)
+- `AUTOPSY_LATENCY_SCALE` (default: 2.5)
 
-1. **Watch** the flowchart fill in live — agents turn green as they complete, then **two nodes go red** when the synthesizer hits context overflow. Use the **+ / − / ⊡** buttons (top-right of the graph), the mouse wheel, or click-and-drag to **pan and zoom** through the full DAG.
-2. **Click** the red node → **🔍 Diagnose this node**. A green banner appears showing the RocketRide pipeline pre-processed the trace; then GMI Cloud's diagnosis renders with root cause, confidence score, and a code patch.
-3. **Click "Apply fix & replay"**. The simulated replay goes green AND the live pipeline is signalled to switch to the fixed code path. The fix is ONLY applied when you click this button — diagnosing or running a replay without clicking does nothing to the live loop.
-4. **Watch the next iteration** of the live loop run **fully green, end-to-end**, and keep looping forever. Your terminal prints `✅ FIX APPLIED — effective mode = success`.
-5. **Reset** any time using the "↺ reset" button in the header to make it start failing again.
-6. **Clear noise** with the small **`clear`** button in the TRACES sidebar (deletes finished traces, keeps the live one).
-
-Knobs:
-
-```bash
-AUTOPSY_LOOP_DELAY_S=8        # seconds between iterations (default 8)
-AUTOPSY_LATENCY_SCALE=2.5     # slow down sim latencies for live viewing (default 2.5)
-AUTOPSY_DEMO_MODE=broken      # broken (default), success, timeout, bad_json
-```
-
-Run a single iteration (no looping) with `... --once`.
-
-## Demo: the broken agent (alternate)
+### 2. Single-Shot Broken Agent
 
 ```bash
 autopsy run examples/broken_agent.py
 ```
 
-A deliberately broken 4-step pipeline (planner → search-tool → summarizer → response-assembler) that fails with a `JSONDecodeError` caused by `context_overflow`. Smaller, faster demo if you want to show the diagnose-and-fix cycle without the continuous loop.
+A lightweight, single-shot 4-step pipeline that fails with a `JSONDecodeError`. Ideal for a quick walk-through.
 
-## RocketRide integration
+## RocketRide Integration
 
-`autopsy` ships with a real, visual RocketRide pipeline that sits in front of every diagnostic call:
+`autopsy` optionally integrates with **RocketRide** for trace pre-processing:
 
-- **Pipeline definition:** [`pipelines/autopsy_diagnose.pipe`](pipelines/autopsy_diagnose.pipe) — a 6-component pipeline you can open and edit visually in the RocketRide Studio (install the [RocketRide Cursor/VS Code extension](https://marketplace.visualstudio.com/items?itemName=rocketride.rocketride)).
-- **Python client:** [`autopsy/diagnostics/rocketride_agent.py`](autopsy/diagnostics/rocketride_agent.py) — uses the official [`rocketride`](https://pypi.org/project/rocketride/) SDK.
-- **Engine port auto-discovery:** [`autopsy/diagnostics/rocketride_discover.py`](autopsy/diagnostics/rocketride_discover.py) — finds the running engine even when the IDE extension starts it on a random port.
-
-### Pipeline shape
-
-```
-chat_1  ──►  prompt_1  ──►  agent_rocketride_1  ──►  response_answers_1
-                                  │
-                       ┌──────────┴──────────┐
-                       ▼                     ▼
-                  llm_openai_1         memory_internal_1
-              (GMI Cloud, OpenAI-     (vector store of past
-               compatible endpoint)    autopsy failures)
-```
-
-The `llm_openai_1` node points at GMI Cloud's OpenAI-compatible endpoint — so the **pipeline's own LLM is also GMI**. Two products, one provider, two distinct roles.
-
-### What it does on every diagnose click
-
-1. **Sanitize** PII / secrets (API keys, bearer tokens, emails) via the prompt instructions
-2. **Summarize** the trace with an "errors-first" strategy so the downstream LLM sees the failing slice first
-3. **Vector-search** the `memory_internal_1` namespace for similar past failures — your team's accumulated debugging history
-4. **Return** a structured JSON context object that gets attached to the GMI prompt
-
-A green banner then appears in the dashboard:
-
-> ● Trace pre-processed by RocketRide pipeline `autopsy_diagnose.pipe`
-
-### Safe mode vs. live mode
-
-The integration runs in **safe mode** by default (`AUTOPSY_ROCKETRIDE_SAFE_MODE=1`). In safe mode the agent synthesizes the enriched context locally — derived from the actual trace — so the demo is deterministic and never depends on third-party engine availability or LLM billing. The `.pipe` file, the integration code, and the dashboard banner all remain real.
-
-Set `AUTOPSY_ROCKETRIDE_SAFE_MODE=0` to hit the live engine end-to-end. autopsy will:
-
-1. Auto-discover the engine's listening port (the IDE extension launches it on a random port)
-2. Push the required `ROCKETRIDE_*` env vars into the engine via `account.set_env`
-3. Load the pipeline via `client.use(filepath=...)`
-4. Send the serialized trace as a chat question via `client.chat(token, ...)`
-5. Attach the response to the diagnostic prompt
-
-### Graceful fallback
-
-The integration is **fully optional** and **cannot break the demo**:
-
-- If `rocketride` is not installed → skipped silently
-- If the engine isn't reachable → skipped silently
-- If the pipeline run errors → skipped silently
-- In every case, autopsy falls back to the direct GMI Cloud diagnostic path
-
-The header pill (`RocketRide: ready / engine offline / not installed`) shows live status; the dashboard polls `/api/rocketride/status` every 30 seconds.
-
-### Smoke test
-
-```bash
-.venv/bin/python scripts/test_rocketride_pipe.py
-```
-
-Connects to the live engine, terminates any prior task, loads the pipeline, sends a fake trace as a chat question, and prints the response. Use this to validate your `.env` and engine setup before flipping `AUTOPSY_ROCKETRIDE_SAFE_MODE=0`.
+- **Visual Editor**: Open and edit [`pipelines/autopsy_diagnose.pipe`](pipelines/autopsy_diagnose.pipe) in the RocketRide Studio extension.
+- **Safe Mode**: Runs in simulated safe mode by default (`AUTOPSY_ROCKETRIDE_SAFE_MODE=1`), which requires no external services. Set to `0` to hit the live RocketRide engine.
+- **Smoke Test**: Validate live integration using:
+  ```bash
+  python scripts/test_rocketride_pipe.py
+  ```
 
 ## Architecture
 
-```
-autopsy/
-  core/
-    events.py                 # event dataclasses
-    tracer.py                 # TraceSession — lifetime of one run
-    decorator.py              # @lens.trace
-    interceptor.py            # monkey-patches OpenAI SDK
-    replay.py                 # ReplayEngine (simulated + live)
-  diagnostics/
-    gmi_agent.py              # GMI Cloud diagnostics (primary)
-    gemini_agent.py           # long-context fallback
-    rocketride_agent.py       # RocketRide pre-processor + safe-mode simulator
-    rocketride_discover.py    # auto-find the engine's random listening port
-    prompts.py                # prompt templates + heuristics
-  server/
-    app.py                    # FastAPI + WebSocket + demo endpoints
-    ws_manager.py             # broadcast manager
-    _dashboard.html           # single-page dashboard (HTML/CSS)
-    _dashboard_part{1,2,3}.js # session list, DAG renderer, detail panel
-  cli/main.py                 # click-based CLI
-  __init__.py                 # public: lens, LensConfig, TraceBundle, DiagnosisResult
-examples/
-  financial_research_pipeline.py  # main demo — continuous loop, multi-agent
-  broken_agent.py                 # alternate demo — single-shot 4-step
-  simple_agent.py                 # happy-path demo
-pipelines/
-  autopsy_diagnose.pipe       # RocketRide pipeline — real, editable, visual
-scripts/
-  test_rocketride_pipe.py     # smoke test for the live engine path
-tests/
-  unit/, integration/         # pytest suite — 22 tests, lint-clean
-```
+- **`autopsy/core/`**: Core tracing logic, event definitions, OpenAI SDK monkey-patching, and replay runner.
+- **`autopsy/diagnostics/`**: GMI, Gemini, and RocketRide diagnoser clients.
+- **`autopsy/server/`**: FastAPI server and the Vanilla-JS dashboard UI.
+- **`autopsy/cli/`**: Click-based CLI commands.
+- **`examples/`**: Demo pipelines.
+- **`pipelines/`**: RocketRide pipeline definitions.
 
-## Tests & quality
+## Tests & Development
+
+Run the test suite and code quality checks:
 
 ```bash
-.venv/bin/python -m pytest tests/ -q   # 22 passed
-.venv/bin/ruff check autopsy tests     # All checks passed!
+pytest tests/
+ruff check autopsy tests
 ```
 
-## Robustness notes
+## Robustness & Design
 
-- The tracer never raises — a bug in instrumentation never crashes the user's agent
-- Diagnostics has a strong heuristic fallback so the demo works even if every cloud LLM is down
-- Session storage tries `~/.autopsy/sessions`, then `./.autopsy/sessions`, then `/tmp` — picks the first writable location
-- WebSocket auto-reconnects with exponential backoff
-- The OpenAI interceptor is install-once / refcounted so multiple concurrent sessions don't fight
-- All session writes are atomic (write to `.tmp` then rename); index updates are file-locked
-- RocketRide integration is install-optional and run-optional — autopsy never breaks if it's absent or down
+- **Fault Tolerant**: Code instrumentation never crashes the parent agent.
+- **Heuristic Fallback**: Always provides a fallback diagnosis if external APIs are unreachable.
+- **Atomic File Access**: Local session updates use atomic writes and file-locking.
+- **Graceful degradation**: RocketRide is completely optional; fallback to standard GMI is automatic.
+
+## Demo video link:
+
+### https://youtu.be/FpxuyQTs2Hg
 
 ## License
 
